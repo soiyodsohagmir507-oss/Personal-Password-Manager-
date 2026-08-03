@@ -1,0 +1,450 @@
+import React, { useState } from 'react';
+import { motion } from 'motion/react';
+import { Shield, Lock, Key, Copy, Check, Eye, EyeOff, AlertTriangle, ArrowRight, ShieldCheck } from 'lucide-react';
+import { generateSalt, generateRecoveryKey, hashString, deriveKey } from '../lib/crypto';
+import { t } from '../lib/i18n';
+import { UserSettings } from '../types';
+
+interface MasterPasswordModalProps {
+  isConfigured: boolean;
+  masterPasswordHash: string | null;
+  recoveryKeyHash: string | null;
+  salt: string | null;
+  twoFactorEnabled: boolean;
+  twoFactorCode?: string | null;
+  language: 'bn' | 'en';
+  onUnlockSuccess: (key: CryptoKey, masterPassword: string) => void;
+  onInitialSetup: (
+    masterHash: string,
+    recoveryHash: string,
+    salt: string,
+    cryptoKey: CryptoKey,
+    recoveryKey: string,
+    masterPassword: string
+  ) => void;
+  onRecoverVault: (recoveryKeyInput: string, newMasterPassword: string) => void;
+}
+
+export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
+  isConfigured,
+  masterPasswordHash,
+  recoveryKeyHash,
+  salt,
+  twoFactorEnabled,
+  twoFactorCode,
+  language,
+  onUnlockSuccess,
+  onInitialSetup,
+}) => {
+  // States
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isRecoveryMode, setIsRecoveryMode] = useState(false);
+  const [recoveryInput, setRecoveryInput] = useState('');
+  const [twoFactorInput, setTwoFactorInput] = useState('');
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [pendingCryptoKey, setPendingCryptoKey] = useState<CryptoKey | null>(null);
+
+  // Setup Step state (0 = Enter Passwords, 1 = Save Recovery Key)
+  const [setupStep, setSetupStep] = useState(0);
+  const [generatedRecoveryKey, setGeneratedRecoveryKey] = useState('');
+  const [copiedRecovery, setCopiedRecovery] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Setup New Vault
+  const handleStartSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (password.length < 8) {
+      setErrorMsg(language === 'bn' ? 'মাস্টার পাসওয়ার্ড অন্তত ৮ অক্ষরের হতে হবে' : 'Master password must be at least 8 characters long');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErrorMsg(t(language, 'masterPasswordMismatch'));
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const newSalt = generateSalt(16);
+      const newRecoveryKey = generateRecoveryKey();
+
+      const mHash = await hashString(password, newSalt);
+      const rHash = await hashString(newRecoveryKey, newSalt);
+      const derivedCryptoKey = await deriveKey(password, newSalt);
+
+      setGeneratedRecoveryKey(newRecoveryKey);
+      setPendingCryptoKey(derivedCryptoKey);
+      setSetupStep(1); // Proceed to show Recovery Key to user
+    } catch (err) {
+      console.error('Setup error:', err);
+      setErrorMsg('Failed to process setup');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFinishSetup = async () => {
+    if (!salt && pendingCryptoKey) {
+      const newSalt = generateSalt(16);
+      const mHash = await hashString(password, newSalt);
+      const rHash = await hashString(generatedRecoveryKey, newSalt);
+      onInitialSetup(mHash, rHash, newSalt, pendingCryptoKey, generatedRecoveryKey, password);
+    } else if (pendingCryptoKey && salt) {
+      const mHash = await hashString(password, salt);
+      const rHash = await hashString(generatedRecoveryKey, salt);
+      onInitialSetup(mHash, rHash, salt, pendingCryptoKey, generatedRecoveryKey, password);
+    }
+  };
+
+  // Unlock Existing Vault
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (!password || !salt || !masterPasswordHash) return;
+
+    setLoading(true);
+    try {
+      const computedHash = await hashString(password, salt);
+      if (computedHash !== masterPasswordHash) {
+        setErrorMsg(t(language, 'incorrectMasterPassword'));
+        setLoading(false);
+        return;
+      }
+
+      const derivedCryptoKey = await deriveKey(password, salt);
+
+      if (twoFactorEnabled) {
+        setPendingCryptoKey(derivedCryptoKey);
+        setRequires2FA(true);
+        setLoading(false);
+        return;
+      }
+
+      onUnlockSuccess(derivedCryptoKey, password);
+    } catch (err) {
+      console.error('Unlock error:', err);
+      setErrorMsg('Error unlocking vault');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Verify 2FA
+  const handleVerify2FA = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (twoFactorCode && twoFactorInput.trim() !== twoFactorCode.trim()) {
+      setErrorMsg(language === 'bn' ? 'ভুল ২এফএ কোড!' : 'Invalid 2FA Verification Code!');
+      return;
+    }
+    if (pendingCryptoKey) {
+      onUnlockSuccess(pendingCryptoKey, password);
+    }
+  };
+
+  // Recover with Recovery Key
+  const handleRecoverySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (!recoveryInput || !salt || !recoveryKeyHash) return;
+
+    setLoading(true);
+    try {
+      const formattedInput = recoveryInput.trim().toUpperCase();
+      const computedHash = await hashString(formattedInput, salt);
+
+      if (computedHash !== recoveryKeyHash) {
+        setErrorMsg(language === 'bn' ? 'রিকভারি কি মিলছে না! সঠিক কি দিন।' : 'Invalid Recovery Key!');
+        setLoading(false);
+        return;
+      }
+
+      // If recovery key is correct, prompt user to set a new password
+      setIsRecoveryMode(false);
+      setSetupStep(0);
+      setPassword('');
+      setConfirmPassword('');
+      setErrorMsg(language === 'bn' ? 'রিকভারি সফল! নতুন মাস্টার পাসওয়ার্ড সেট করুন।' : 'Recovery Key accepted! Set a new master password.');
+    } catch (err) {
+      console.error(err);
+      setErrorMsg('Error verifying recovery key');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyRecoveryKey = () => {
+    navigator.clipboard.writeText(generatedRecoveryKey);
+    setCopiedRecovery(true);
+    setTimeout(() => setCopiedRecovery(false), 2500);
+  };
+
+  const downloadRecoveryKey = () => {
+    const text = `=========================================\nPERSONAL PASSWORD MANAGER RECOVERY KEY\n=========================================\n\nRecovery Key: ${generatedRecoveryKey}\nCreated: ${new Date().toLocaleString()}\n\nKEEP THIS KEY SAFE AND CONFIDENTIAL!\nIT IS THE ONLY WAY TO RESTORE YOUR ENCRYPTED VAULT IF YOU FORGET YOUR MASTER PASSWORD.`;
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'password_manager_recovery_key.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0A0C10]/90 backdrop-blur-xl p-4 overflow-y-auto">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="w-full max-w-md glass p-6 md:p-8 rounded-2xl shadow-2xl text-slate-100"
+      >
+        {/* Brand Header */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600 shadow-lg shadow-blue-900/30 mb-3">
+            <ShieldCheck className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">
+            {t(language, 'appName')}
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">{t(language, 'tagline')}</p>
+        </div>
+
+        {errorMsg && (
+          <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {/* 1. SETUP INITIAL VAULT MODE */}
+        {!isConfigured && setupStep === 0 && (
+          <form onSubmit={handleStartSetup} className="space-y-4">
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3.5 text-xs text-blue-300">
+              🔒 {language === 'bn' ? 'প্রথমবার সেটআপ: একটি বিশ্বস্ত মাস্টার পাসওয়ার্ড নির্বাচন করুন। এটি আপনার সব সংরক্ষিত ডেটা এনক্রিপ্ট করবে।' : 'First-time setup: Choose a secure master password. This will encrypt all your vault records.'}
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                {t(language, 'masterPassword')}
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={t(language, 'enterMasterPassword')}
+                  className="w-full bg-white/5 border border-white/10 focus:border-blue-500 rounded-xl px-4 py-2.5 pl-10 pr-10 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-slate-500 hover:text-slate-200"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                {t(language, 'confirmMasterPassword')}
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder={t(language, 'confirmMasterPassword')}
+                  className="w-full bg-white/5 border border-white/10 focus:border-blue-500 rounded-xl px-4 py-2.5 pl-10 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2"
+            >
+              {loading ? 'Processing...' : t(language, 'createVault')}
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </form>
+        )}
+
+        {/* 2. RECOVERY KEY GENERATED DISPLAY STEP */}
+        {!isConfigured && setupStep === 1 && (
+          <div className="space-y-4">
+            <div className="text-center">
+              <Key className="w-10 h-10 text-amber-400 mx-auto mb-2" />
+              <h3 className="font-semibold text-lg">{t(language, 'recoveryKey')}</h3>
+              <p className="text-xs text-slate-400 mt-1">{t(language, 'recoveryKeyWarning')}</p>
+            </div>
+
+            <div className="bg-black/40 border border-amber-500/30 rounded-xl p-4 text-center font-mono text-amber-300 tracking-wider text-base font-bold select-all">
+              {generatedRecoveryKey}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={copyRecoveryKey}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium border border-white/10 flex items-center justify-center gap-1.5 transition text-slate-200"
+              >
+                {copiedRecovery ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                {copiedRecovery ? 'Copied!' : 'Copy Key'}
+              </button>
+              <button
+                type="button"
+                onClick={downloadRecoveryKey}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium border border-white/10 flex items-center justify-center gap-1.5 transition text-slate-200"
+              >
+                <Key className="w-4 h-4 text-blue-400" />
+                Download TXT
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleFinishSetup}
+              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/30 transition mt-2"
+            >
+              {language === 'bn' ? 'আমি রিকভারি কি সেভ করেছি, ভল্ট খুলুন' : 'I have saved my Recovery Key, Enter Vault'}
+            </button>
+          </div>
+        )}
+
+        {/* 3. UNLOCK CONFIGURED VAULT MODE */}
+        {isConfigured && !isRecoveryMode && !requires2FA && (
+          <form onSubmit={handleUnlock} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                {t(language, 'masterPassword')}
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoFocus
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={t(language, 'enterMasterPassword')}
+                  className="w-full bg-white/5 border border-white/10 focus:border-blue-500 rounded-xl px-4 py-2.5 pl-10 pr-10 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-slate-500 hover:text-slate-200"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2"
+            >
+              {loading ? 'Decrypting...' : t(language, 'unlockVault')}
+              <Shield className="w-4 h-4" />
+            </button>
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRecoveryMode(true);
+                  setErrorMsg('');
+                }}
+                className="text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2"
+              >
+                {language === 'bn' ? 'পাসওয়ার্ড ভুলে গেছেন? রিকভারি কি ব্যবহার করুন' : 'Forgot password? Use Recovery Key'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* 4. 2FA VERIFICATION STEP */}
+        {requires2FA && (
+          <form onSubmit={handleVerify2FA} className="space-y-4">
+            <div className="text-center mb-2">
+              <ShieldCheck className="w-10 h-10 text-blue-400 mx-auto mb-1" />
+              <h3 className="font-semibold text-sm">
+                {language === 'bn' ? 'টু-ফ্যাক্টর (2FA) পিন প্রদান করুন' : 'Enter 2FA Verification Code'}
+              </h3>
+            </div>
+
+            <div>
+              <input
+                type="text"
+                required
+                maxLength={6}
+                value={twoFactorInput}
+                onChange={(e) => setTwoFactorInput(e.target.value)}
+                placeholder="6-Digit PIN"
+                className="w-full bg-white/5 border border-white/10 text-slate-100 text-center font-mono text-lg tracking-widest rounded-xl py-2.5 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-lg shadow-blue-900/30"
+            >
+              {language === 'bn' ? 'পিন ভেরিফাই করুন' : 'Verify PIN'}
+            </button>
+          </form>
+        )}
+
+        {/* 5. RECOVERY KEY INPUT MODE */}
+        {isRecoveryMode && (
+          <form onSubmit={handleRecoverySubmit} className="space-y-4">
+            <div className="text-center mb-2">
+              <Key className="w-8 h-8 text-amber-400 mx-auto mb-1" />
+              <h3 className="font-semibold text-sm">{t(language, 'recoveryKey')}</h3>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                {language === 'bn' ? 'আপনার সংরক্ষিত ২৪-ডিজিট রিকভারি কি লিখুন' : 'Enter your 24-character Recovery Key'}
+              </label>
+              <input
+                type="text"
+                required
+                value={recoveryInput}
+                onChange={(e) => setRecoveryInput(e.target.value)}
+                placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+                className="w-full bg-white/5 border border-white/10 font-mono text-center text-sm py-2.5 rounded-xl text-amber-300 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsRecoveryMode(false)}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 border border-white/10"
+              >
+                {t(language, 'cancel')}
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow transition"
+              >
+                {loading ? 'Verifying...' : 'Restore'}
+              </button>
+            </div>
+          </form>
+        )}
+      </motion.div>
+    </div>
+  );
+};

@@ -1,0 +1,6 @@
+{
+  "name": "Personal Password Manager",
+  "description": "A secure, modern personal password manager with client-side AES-256-GCM vault encryption, master key authentication, generator, security auditor, and backup/restore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
