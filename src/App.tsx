@@ -271,52 +271,24 @@ export default function App() {
     };
 
     setVaultConfig(newVault);
-    setCryptoKey(key);
-    setMasterPasswordPlain(masterPassPlain);
-    setAccounts([]);
-    setIsLocked(false);
-    if (recoveryKey) {
-      setActiveRecoveryKey(recoveryKey);
-    }
-
+    setIsLocked(true); // Keep vault locked so user enters Master Password on Vault Login page
     await saveVaultData(newVault);
     recordActivityLog('Vault Initialized', 'First-time master password configured', 'auth');
-    addToast('Master password configured! Vault created.', 'success');
+    addToast(
+      settings.language === 'bn'
+        ? 'ভল্ট সফলভাবে তৈরি হয়েছে! এবার মাস্টার পাসওয়ার্ড দিয়ে ভল্ট লগইন করুন।'
+        : 'Vault created! Please enter your Master Password on the Vault Login page.',
+      'success'
+    );
   };
 
-  // 4. Automatic Vault Unlock or Initial Setup on Authentication
-  const handleAuthSuccess = async (masterPassword: string) => {
+  // 4. Vault Authentication Handler
+  const handleAuthSuccess = async (accountPassword: string) => {
     const activeUid = authUser?.uid || auth.currentUser?.uid;
     if (!activeUid) return;
     const data = await fetchVaultData(activeUid);
     setVaultConfig(data);
-
-    if (data.isConfigured && data.salt && data.masterPasswordHash) {
-      try {
-        const computedHash = await hashString(masterPassword, data.salt);
-        if (computedHash === data.masterPasswordHash) {
-          const key = await deriveKey(masterPassword, data.salt);
-          await handleUnlockSuccess(key, masterPassword);
-        } else {
-          setIsLocked(true);
-        }
-      } catch (err) {
-        console.error('Auto unlock error:', err);
-        setIsLocked(true);
-      }
-    } else {
-      // Automatic first-time vault creation for new user account
-      try {
-        const newSalt = generateSalt(16);
-        const newRecoveryKey = generateRecoveryKey();
-        const mHash = await hashString(masterPassword, newSalt);
-        const rHash = await hashString(newRecoveryKey, newSalt);
-        const key = await deriveKey(masterPassword, newSalt);
-        await handleInitialSetup(mHash, rHash, newSalt, key, newRecoveryKey, masterPassword);
-      } catch (err) {
-        console.error('Auto initial setup error:', err);
-      }
-    }
+    setIsLocked(true); // Always require Vault unlock/login
   };
 
   // Lock Vault

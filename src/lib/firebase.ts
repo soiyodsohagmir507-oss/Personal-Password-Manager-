@@ -184,6 +184,21 @@ export async function logoutUser(): Promise<void> {
   } catch (e) {}
 }
 
+export async function resetAccountPassword(rawUserId: string, newPass: string): Promise<boolean> {
+  const cleanId = rawUserId.toLowerCase().trim();
+  const accountsRaw = localStorage.getItem('local_vault_accounts') || '{}';
+  const accounts = JSON.parse(accountsRaw);
+
+  const passHash = await hashString(newPass, cleanId);
+  accounts[cleanId] = {
+    userId: cleanId,
+    passHash,
+    updatedAt: new Date().toISOString(),
+  };
+  localStorage.setItem('local_vault_accounts', JSON.stringify(accounts));
+  return true;
+}
+
 // --- FIRESTORE VAULT STORAGE ---
 
 export async function fetchUserVaultData(userId: string): Promise<EncryptedVaultData | null> {

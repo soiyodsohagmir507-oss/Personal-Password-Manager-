@@ -216,13 +216,19 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
       >
         {/* Brand Header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600 shadow-lg shadow-blue-900/30 mb-3">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 shadow-lg shadow-indigo-900/30 mb-3">
             <ShieldCheck className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            {t(language, 'appName')}
+            {!isConfigured || isResettingPassword
+              ? (language === 'bn' ? 'ভল্ট তৈরি করুন (Create Vault)' : 'Create Your Vault')
+              : (language === 'bn' ? 'ভল্ট লগইন (Vault Login)' : 'Vault Login')}
           </h1>
-          <p className="text-xs text-slate-400 mt-1">{t(language, 'tagline')}</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {!isConfigured || isResettingPassword
+              ? (language === 'bn' ? 'আপনার ভল্টের জন্য মাস্টার পাসওয়ার্ড দুইবার লিখুন।' : 'Set a Master Password to protect your vault.')
+              : (language === 'bn' ? 'আপনার ভল্টে প্রবেশ করতে মাস্টার পাসওয়ার্ড লিখুন।' : 'Enter your Master Password to unlock your vault.')}
+          </p>
         </div>
 
         {errorMsg && (
@@ -326,9 +332,10 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
             <button
               type="button"
               onClick={handleFinishSetup}
-              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/30 transition mt-2"
+              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition mt-2 flex items-center justify-center gap-2"
             >
-              {language === 'bn' ? 'আমি রিকভারি কি সেভ করেছি, ভল্ট খুলুন' : 'I have saved my Recovery Key, Enter Vault'}
+              <span>{language === 'bn' ? 'আমি রিকভারি কোড সেভ করেছি, ভল্ট লগইন পেজে যান' : 'I have saved my Recovery Key, proceed to Vault Login'}</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         )}
@@ -337,8 +344,8 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         {isConfigured && !isRecoveryMode && !requires2FA && !isResettingPassword && (
           <form onSubmit={handleUnlock} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                {t(language, 'masterPassword')}
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                {language === 'bn' ? 'মাস্টার পাসওয়ার্ড (Master Password)' : 'Master Password'}
               </label>
               <div className="relative">
                 <input
@@ -347,8 +354,8 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
                   autoFocus
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t(language, 'enterMasterPassword')}
-                  className="w-full bg-white/5 border border-white/10 focus:border-blue-500 rounded-xl px-4 py-2.5 pl-10 pr-10 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="••••••••"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 pl-10 pr-10 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
                 />
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
                 <button
@@ -364,10 +371,10 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2"
+              className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2"
             >
-              {loading ? 'Decrypting...' : t(language, 'unlockVault')}
               <Shield className="w-4 h-4" />
+              <span>{loading ? (language === 'bn' ? 'আনলক হচ্ছে...' : 'Unlocking...') : (language === 'bn' ? 'ভল্ট লগইন (Vault Login)' : 'Vault Login')}</span>
             </button>
 
             <div className="text-center pt-2">
