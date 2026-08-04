@@ -61,6 +61,7 @@ export interface EncryptedVaultData {
   recoveryKeyHash: string | null;
   salt: string | null;
   encryptedAccountsBlob: string | null; // AES-256-GCM encrypted payload of CredentialAccount[]
+  encryptedAccountsBlobForRecovery?: string | null; // AES-256-GCM encrypted payload with recovery key
   customCategories: string[];
   settings: UserSettings;
   updatedAt: string;

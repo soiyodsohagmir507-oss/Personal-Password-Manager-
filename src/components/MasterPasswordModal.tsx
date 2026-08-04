@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Shield, Lock, Key, Copy, Check, Eye, EyeOff, AlertTriangle, ArrowRight, ShieldCheck } from 'lucide-react';
-import { generateSalt, generateRecoveryKey, hashString, deriveKey } from '../lib/crypto';
+import { generateSalt, generateRecoveryKey, hashString, deriveKey, decryptData } from '../lib/crypto';
 import { t } from '../lib/i18n';
-import { UserSettings } from '../types';
+import { CredentialAccount, UserSettings } from '../types';
 
 interface MasterPasswordModalProps {
   isConfigured: boolean;
   masterPasswordHash: string | null;
   recoveryKeyHash: string | null;
   salt: string | null;
+  encryptedAccountsBlob?: string | null;
+  encryptedAccountsBlobForRecovery?: string | null;
   twoFactorEnabled: boolean;
   twoFactorCode?: string | null;
   language: 'bn' | 'en';
@@ -22,7 +24,15 @@ interface MasterPasswordModalProps {
     recoveryKey: string,
     masterPassword: string
   ) => void;
-  onRecoverVault: (recoveryKeyInput: string, newMasterPassword: string) => void;
+  onResetPassword: (
+    masterHash: string,
+    recoveryHash: string,
+    salt: string,
+    cryptoKey: CryptoKey,
+    recoveryKey: string,
+    masterPassword: string,
+    recoveredAccounts: CredentialAccount[]
+  ) => void;
 }
 
 export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
@@ -30,11 +40,14 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   masterPasswordHash,
   recoveryKeyHash,
   salt,
+  encryptedAccountsBlob,
+  encryptedAccountsBlobForRecovery,
   twoFactorEnabled,
   twoFactorCode,
   language,
   onUnlockSuccess,
   onInitialSetup,
+  onResetPassword,
 }) => {
   // States
   const [password, setPassword] = useState('');
@@ -45,6 +58,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   const [twoFactorInput, setTwoFactorInput] = useState('');
   const [requires2FA, setRequires2FA] = useState(false);
   const [pendingCryptoKey, setPendingCryptoKey] = useState<CryptoKey | null>(null);
+  const [recoveredAccounts, setRecoveredAccounts] = useState<CredentialAccount[]>([]);
 
   // Setup Step state (0 = Enter Passwords, 1 = Save Recovery Key)
   const [setupStep, setSetupStep] = useState(0);
@@ -95,19 +109,45 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   };
 
   const handleFinishSetup = async () => {
-    if (generatedSalt && pendingCryptoKey) {
-      onInitialSetup(
-        generatedMasterHash,
-        generatedRecoveryHash,
-        generatedSalt,
-        pendingCryptoKey,
-        generatedRecoveryKey,
-        password
-      );
-    } else if (salt && pendingCryptoKey) {
-      const mHash = await hashString(password, salt);
-      const rHash = await hashString(generatedRecoveryKey, salt);
-      onInitialSetup(mHash, rHash, salt, pendingCryptoKey, generatedRecoveryKey, password);
+    if (isResettingPassword) {
+      if (generatedSalt && pendingCryptoKey) {
+        onResetPassword(
+          generatedMasterHash,
+          generatedRecoveryHash,
+          generatedSalt,
+          pendingCryptoKey,
+          generatedRecoveryKey,
+          password,
+          recoveredAccounts
+        );
+      } else if (salt && pendingCryptoKey) {
+        const mHash = await hashString(password, salt);
+        const rHash = await hashString(generatedRecoveryKey, salt);
+        onResetPassword(
+          mHash,
+          rHash,
+          salt,
+          pendingCryptoKey,
+          generatedRecoveryKey,
+          password,
+          recoveredAccounts
+        );
+      }
+    } else {
+      if (generatedSalt && pendingCryptoKey) {
+        onInitialSetup(
+          generatedMasterHash,
+          generatedRecoveryHash,
+          generatedSalt,
+          pendingCryptoKey,
+          generatedRecoveryKey,
+          password
+        );
+      } else if (salt && pendingCryptoKey) {
+        const mHash = await hashString(password, salt);
+        const rHash = await hashString(generatedRecoveryKey, salt);
+        onInitialSetup(mHash, rHash, salt, pendingCryptoKey, generatedRecoveryKey, password);
+      }
     }
   };
 
@@ -175,13 +215,25 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         return;
       }
 
-      // If recovery key is correct, prompt user to set a new password
+      // Try decrypting existing accounts payload using the verified Recovery Key
+      let decryptedAccounts: CredentialAccount[] = [];
+      try {
+        const recCryptoKey = await deriveKey(formattedInput, salt);
+        const targetBlob = encryptedAccountsBlobForRecovery || encryptedAccountsBlob;
+        if (targetBlob) {
+          decryptedAccounts = await decryptData(targetBlob, recCryptoKey);
+        }
+      } catch (decErr) {
+        console.warn('Could not decrypt accounts with recovery key:', decErr);
+      }
+
+      setRecoveredAccounts(decryptedAccounts || []);
       setIsRecoveryMode(false);
       setIsResettingPassword(true);
       setSetupStep(0);
       setPassword('');
       setConfirmPassword('');
-      setErrorMsg(language === 'bn' ? 'রিকভারি সফল! নতুন মাস্টার পাসওয়ার্ড সেট করুন।' : 'Recovery Key accepted! Set a new master password.');
+      setErrorMsg('');
     } catch (err) {
       console.error(err);
       setErrorMsg('Error verifying recovery key');
@@ -220,14 +272,18 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
             <ShieldCheck className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            {!isConfigured || isResettingPassword
-              ? (language === 'bn' ? 'ভল্ট তৈরি করুন (Create Vault)' : 'Create Your Vault')
-              : (language === 'bn' ? 'ভল্ট লগইন (Vault Login)' : 'Vault Login')}
+            {isResettingPassword
+              ? (language === 'bn' ? 'নতুন মাস্টার পাসওয়ার্ড দিন' : 'Reset Master Password')
+              : (!isConfigured
+                ? (language === 'bn' ? 'ভল্ট তৈরি করুন (Create Vault)' : 'Create Your Vault')
+                : (language === 'bn' ? 'ভল্ট লগইন (Vault Login)' : 'Vault Login'))}
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            {!isConfigured || isResettingPassword
-              ? (language === 'bn' ? 'আপনার ভল্টের জন্য মাস্টার পাসওয়ার্ড দুইবার লিখুন।' : 'Set a Master Password to protect your vault.')
-              : (language === 'bn' ? 'আপনার ভল্টে প্রবেশ করতে মাস্টার পাসওয়ার্ড লিখুন।' : 'Enter your Master Password to unlock your vault.')}
+            {isResettingPassword
+              ? (language === 'bn' ? 'রিকভারির পর আপনার নতুন মাস্টার পাসওয়ার্ড সেট করুন।' : 'Choose a new Master Password after recovery.')
+              : (!isConfigured
+                ? (language === 'bn' ? 'আপনার ভল্টের জন্য মাস্টার পাসওয়ার্ড দুইবার লিখুন।' : 'Set a Master Password to protect your vault.')
+                : (language === 'bn' ? 'আপনার ভল্টে প্রবেশ করতে মাস্টার পাসওয়ার্ড লিখুন।' : 'Enter your Master Password to unlock your vault.'))}
           </p>
         </div>
 
@@ -238,11 +294,13 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
           </div>
         )}
 
-        {/* 1. SETUP INITIAL VAULT MODE */}
+        {/* 1. SETUP / RESET MASTER PASSWORD MODE */}
         {(!isConfigured || isResettingPassword) && setupStep === 0 && (
           <form onSubmit={handleStartSetup} className="space-y-4">
             <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3.5 text-xs text-blue-300">
-              🔒 {language === 'bn' ? 'প্রথমবার সেটআপ: একটি বিশ্বস্ত মাস্টার পাসওয়ার্ড নির্বাচন করুন। এটি আপনার সব সংরক্ষিত ডেটা এনক্রিপ্ট করবে।' : 'First-time setup: Choose a secure master password. This will encrypt all your vault records.'}
+              {isResettingPassword
+                ? (language === 'bn' ? '🔑 রিকভারি সফল! আপনার নতুন মাস্টার পাসওয়ার্ড সেট করুন। ভল্টের আগের সমস্ত তথ্য আগের মতোই অক্ষত থাকবে।' : '🔑 Recovery successful! Set your new Master Password. All existing vault records will be preserved.')
+                : (language === 'bn' ? '🔒 প্রথমবার সেটআপ: একটি বিশ্বস্ত মাস্টার পাসওয়ার্ড নির্বাচন করুন। এটি আপনার সব সংরক্ষিত ডেটা এনক্রিপ্ট করবে।' : '🔒 First-time setup: Choose a secure master password. This will encrypt all your vault records.')}
             </div>
 
             <div>
@@ -291,7 +349,11 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
               disabled={loading}
               className="w-full py-3 px-4 rounded-xl font-semibold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2"
             >
-              {loading ? 'Processing...' : t(language, 'createVault')}
+              {loading
+                ? 'Processing...'
+                : isResettingPassword
+                ? (language === 'bn' ? 'নতুন মাস্টার পাসওয়ার্ড সেট করুন' : 'Set New Master Password')
+                : t(language, 'createVault')}
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

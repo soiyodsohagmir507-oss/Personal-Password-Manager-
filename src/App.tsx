@@ -259,12 +259,17 @@ export default function App() {
     recoveryKey: string,
     masterPassPlain: string
   ) => {
+    const recCryptoKey = await deriveKey(recoveryKey, salt);
+    const encryptedMasterBlob = await encryptData([], key);
+    const encryptedRecBlob = await encryptData([], recCryptoKey);
+
     const newVault: EncryptedVaultData = {
       isConfigured: true,
       masterPasswordHash: masterHash,
       recoveryKeyHash: recoveryHash,
       salt: salt,
-      encryptedAccountsBlob: null,
+      encryptedAccountsBlob: encryptedMasterBlob,
+      encryptedAccountsBlobForRecovery: encryptedRecBlob,
       customCategories: [],
       settings,
       updatedAt: new Date().toISOString(),
@@ -276,8 +281,48 @@ export default function App() {
     recordActivityLog('Vault Initialized', 'First-time master password configured', 'auth');
     addToast(
       settings.language === 'bn'
-        ? 'ভল্ট সফলভাবে তৈরি হয়েছে! এবার মাস্টার পাসওয়ার্ড দিয়ে ভল্ট লগইন করুন।'
+        ? 'ভল্ট সফলভাবে তৈরি হয়েছে! এবার মাস্টার পাসওয়ার্ড দিয়ে ভল্ট লগইন করুন।'
         : 'Vault created! Please enter your Master Password on the Vault Login page.',
+      'success'
+    );
+  };
+
+  // 3b. Master Password Reset Callback (via Recovery Key)
+  const handleResetMasterPassword = async (
+    masterHash: string,
+    recoveryHash: string,
+    salt: string,
+    key: CryptoKey,
+    recoveryKey: string,
+    masterPassPlain: string,
+    recoveredAccountsList: CredentialAccount[]
+  ) => {
+    const accountsToKeep = recoveredAccountsList.length > 0 ? recoveredAccountsList : accounts;
+
+    const newMasterBlob = await encryptData(accountsToKeep, key);
+    const recCryptoKey = await deriveKey(recoveryKey, salt);
+    const newRecBlob = await encryptData(accountsToKeep, recCryptoKey);
+
+    const updatedVault: EncryptedVaultData = {
+      ...vaultConfig,
+      isConfigured: true,
+      masterPasswordHash: masterHash,
+      recoveryKeyHash: recoveryHash,
+      salt: salt,
+      encryptedAccountsBlob: newMasterBlob,
+      encryptedAccountsBlobForRecovery: newRecBlob,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setVaultConfig(updatedVault);
+    setAccounts(accountsToKeep);
+    setIsLocked(true); // Keep vault locked so user enters Master Password on Vault Login page
+    await saveVaultData(updatedVault);
+    recordActivityLog('Vault Password Reset', 'Master password reset via recovery key', 'security');
+    addToast(
+      settings.language === 'bn'
+        ? 'পাসওয়ার্ড সফলভাবে পরিবর্তিত হয়েছে! এবার নতুন মাস্টার পাসওয়ার্ড দিয়ে ভল্ট লগইন করুন।'
+        : 'Master password reset successfully! Please log in with your new password.',
       'success'
     );
   };
@@ -545,14 +590,14 @@ export default function App() {
           masterPasswordHash={vaultConfig.masterPasswordHash}
           recoveryKeyHash={vaultConfig.recoveryKeyHash}
           salt={vaultConfig.salt}
+          encryptedAccountsBlob={vaultConfig.encryptedAccountsBlob}
+          encryptedAccountsBlobForRecovery={vaultConfig.encryptedAccountsBlobForRecovery || null}
           twoFactorEnabled={settings.twoFactorEnabled}
           twoFactorCode={settings.twoFactorCode}
           language={settings.language}
           onUnlockSuccess={handleUnlockSuccess}
           onInitialSetup={handleInitialSetup}
-          onRecoverVault={(recKey, newMasterPass) => {
-            addToast('Vault recovered! Please login with your new password.', 'success');
-          }}
+          onResetPassword={handleResetMasterPassword}
         />
       )}
 
