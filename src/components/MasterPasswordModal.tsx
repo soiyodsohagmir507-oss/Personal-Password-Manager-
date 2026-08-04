@@ -49,6 +49,10 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   // Setup Step state (0 = Enter Passwords, 1 = Save Recovery Key)
   const [setupStep, setSetupStep] = useState(0);
   const [generatedRecoveryKey, setGeneratedRecoveryKey] = useState('');
+  const [generatedSalt, setGeneratedSalt] = useState('');
+  const [generatedMasterHash, setGeneratedMasterHash] = useState('');
+  const [generatedRecoveryHash, setGeneratedRecoveryHash] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [copiedRecovery, setCopiedRecovery] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
@@ -76,6 +80,9 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
       const rHash = await hashString(newRecoveryKey, newSalt);
       const derivedCryptoKey = await deriveKey(password, newSalt);
 
+      setGeneratedSalt(newSalt);
+      setGeneratedMasterHash(mHash);
+      setGeneratedRecoveryHash(rHash);
       setGeneratedRecoveryKey(newRecoveryKey);
       setPendingCryptoKey(derivedCryptoKey);
       setSetupStep(1); // Proceed to show Recovery Key to user
@@ -88,12 +95,16 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   };
 
   const handleFinishSetup = async () => {
-    if (!salt && pendingCryptoKey) {
-      const newSalt = generateSalt(16);
-      const mHash = await hashString(password, newSalt);
-      const rHash = await hashString(generatedRecoveryKey, newSalt);
-      onInitialSetup(mHash, rHash, newSalt, pendingCryptoKey, generatedRecoveryKey, password);
-    } else if (pendingCryptoKey && salt) {
+    if (generatedSalt && pendingCryptoKey) {
+      onInitialSetup(
+        generatedMasterHash,
+        generatedRecoveryHash,
+        generatedSalt,
+        pendingCryptoKey,
+        generatedRecoveryKey,
+        password
+      );
+    } else if (salt && pendingCryptoKey) {
       const mHash = await hashString(password, salt);
       const rHash = await hashString(generatedRecoveryKey, salt);
       onInitialSetup(mHash, rHash, salt, pendingCryptoKey, generatedRecoveryKey, password);
@@ -166,6 +177,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
 
       // If recovery key is correct, prompt user to set a new password
       setIsRecoveryMode(false);
+      setIsResettingPassword(true);
       setSetupStep(0);
       setPassword('');
       setConfirmPassword('');
@@ -221,7 +233,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         )}
 
         {/* 1. SETUP INITIAL VAULT MODE */}
-        {!isConfigured && setupStep === 0 && (
+        {(!isConfigured || isResettingPassword) && setupStep === 0 && (
           <form onSubmit={handleStartSetup} className="space-y-4">
             <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3.5 text-xs text-blue-300">
               🔒 {language === 'bn' ? 'প্রথমবার সেটআপ: একটি বিশ্বস্ত মাস্টার পাসওয়ার্ড নির্বাচন করুন। এটি আপনার সব সংরক্ষিত ডেটা এনক্রিপ্ট করবে।' : 'First-time setup: Choose a secure master password. This will encrypt all your vault records.'}
@@ -280,7 +292,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         )}
 
         {/* 2. RECOVERY KEY GENERATED DISPLAY STEP */}
-        {!isConfigured && setupStep === 1 && (
+        {(!isConfigured || isResettingPassword) && setupStep === 1 && (
           <div className="space-y-4">
             <div className="text-center">
               <Key className="w-10 h-10 text-amber-400 mx-auto mb-2" />
@@ -322,7 +334,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         )}
 
         {/* 3. UNLOCK CONFIGURED VAULT MODE */}
-        {isConfigured && !isRecoveryMode && !requires2FA && (
+        {isConfigured && !isRecoveryMode && !requires2FA && !isResettingPassword && (
           <form onSubmit={handleUnlock} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">

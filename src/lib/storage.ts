@@ -1,34 +1,70 @@
 import { EncryptedVaultData, ActivityLog } from '../types';
 
 export async function fetchVaultData(): Promise<EncryptedVaultData> {
+  let serverData: EncryptedVaultData | null = null;
   try {
     const res = await fetch('/api/vault');
-    if (!res.ok) throw new Error('Failed to fetch vault from server');
-    return await res.json();
+    if (res.ok) {
+      serverData = await res.json();
+    }
   } catch (err) {
-    console.error('Error loading vault data:', err);
-    // Return empty fallback
-    return {
-      isConfigured: false,
-      masterPasswordHash: null,
-      recoveryKeyHash: null,
-      salt: null,
-      encryptedAccountsBlob: null,
-      customCategories: [],
-      settings: {
-        autoLockMinutes: 5,
-        language: 'bn',
-        theme: 'dark',
-        twoFactorEnabled: false,
-        twoFactorCode: null,
-        autoClearClipboardSeconds: 30,
-      },
-      updatedAt: new Date().toISOString(),
-    };
+    console.error('Error loading vault data from server:', err);
   }
+
+  // If server has configured vault data, cache in localStorage and return
+  if (serverData && serverData.isConfigured) {
+    try {
+      localStorage.setItem('vault_data_backup', JSON.stringify(serverData));
+    } catch (e) {
+      console.error('Error writing local vault backup:', e);
+    }
+    return serverData;
+  }
+
+  // Fallback to local storage if server is unconfigured or unavailable
+  try {
+    const local = localStorage.getItem('vault_data_backup');
+    if (local) {
+      const parsed: EncryptedVaultData = JSON.parse(local);
+      if (parsed && parsed.isConfigured) {
+        // Automatically re-sync server in background
+        saveVaultData(parsed).catch(() => {});
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Error reading local vault backup:', e);
+  }
+
+  // Default empty vault config
+  return serverData || {
+    isConfigured: false,
+    masterPasswordHash: null,
+    recoveryKeyHash: null,
+    salt: null,
+    encryptedAccountsBlob: null,
+    customCategories: [],
+    settings: {
+      autoLockMinutes: 5,
+      language: 'bn',
+      theme: 'dark',
+      twoFactorEnabled: false,
+      twoFactorCode: null,
+      autoClearClipboardSeconds: 30,
+    },
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export async function saveVaultData(vault: EncryptedVaultData): Promise<boolean> {
+  // Save to localStorage immediately
+  try {
+    localStorage.setItem('vault_data_backup', JSON.stringify(vault));
+  } catch (e) {
+    console.error('Error writing local vault backup:', e);
+  }
+
+  // Sync to server endpoint
   try {
     const res = await fetch('/api/vault', {
       method: 'POST',
@@ -37,7 +73,7 @@ export async function saveVaultData(vault: EncryptedVaultData): Promise<boolean>
     });
     return res.ok;
   } catch (err) {
-    console.error('Error saving vault data:', err);
+    console.error('Error saving vault data to server:', err);
     return false;
   }
 }
