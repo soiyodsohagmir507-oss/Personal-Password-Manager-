@@ -8,8 +8,21 @@ import {
   auth
 } from './firebase';
 
+function getEffectiveUid(userId?: string): string | null {
+  if (userId) return userId;
+  if (auth.currentUser?.uid) return auth.currentUser.uid;
+  try {
+    const raw = localStorage.getItem('current_local_vault_user');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.uid) return parsed.uid;
+    }
+  } catch (e) {}
+  return null;
+}
+
 export async function fetchVaultData(userId?: string): Promise<EncryptedVaultData> {
-  const uid = userId || auth.currentUser?.uid;
+  const uid = getEffectiveUid(userId);
 
   if (uid) {
     // Attempt Firestore load for authenticated user
@@ -69,7 +82,7 @@ export async function fetchVaultData(userId?: string): Promise<EncryptedVaultDat
 }
 
 export async function saveVaultData(vault: EncryptedVaultData, userId?: string): Promise<boolean> {
-  const uid = userId || auth.currentUser?.uid;
+  const uid = getEffectiveUid(userId);
 
   if (uid) {
     try {
@@ -101,7 +114,7 @@ export async function saveVaultData(vault: EncryptedVaultData, userId?: string):
 }
 
 export async function fetchActivityLogs(userId?: string): Promise<ActivityLog[]> {
-  const uid = userId || auth.currentUser?.uid;
+  const uid = getEffectiveUid(userId);
   if (uid) {
     return await fetchUserActivityLogs(uid);
   }
@@ -120,7 +133,7 @@ export async function recordActivityLog(
   category: 'auth' | 'account' | 'security' | 'backup' | 'system' = 'system',
   userId?: string
 ) {
-  const uid = userId || auth.currentUser?.uid;
+  const uid = getEffectiveUid(userId);
   if (uid) {
     await addUserActivityLog(uid, action, details, category);
     return;
@@ -137,7 +150,7 @@ export async function recordActivityLog(
 }
 
 export async function clearActivityLogs(userId?: string): Promise<boolean> {
-  const uid = userId || auth.currentUser?.uid;
+  const uid = getEffectiveUid(userId);
   if (uid) {
     return await clearUserActivityLogs(uid);
   }
