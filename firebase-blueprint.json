@@ -1,0 +1,18 @@
+{
+  "entities": {
+    "UserVault": {
+      "collectionName": "users",
+      "isSubcollection": false,
+      "fields": {
+        "isConfigured": { "type": "boolean", "required": true },
+        "masterPasswordHash": { "type": "string", "required": false },
+        "recoveryKeyHash": { "type": "string", "required": false },
+        "salt": { "type": "string", "required": false },
+        "encryptedAccountsBlob": { "type": "string", "required": false },
+        "customCategories": { "type": "array", "required": false },
+        "settings": { "type": "map", "required": false },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    }
+  }
+}

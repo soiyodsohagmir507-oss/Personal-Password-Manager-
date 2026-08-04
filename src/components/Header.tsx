@@ -13,6 +13,8 @@ import {
   Download,
   AlertTriangle,
   Menu,
+  LogOut,
+  User,
 } from 'lucide-react';
 import { t } from '../lib/i18n';
 
@@ -24,6 +26,8 @@ interface HeaderProps {
   autoLockMinutes: number;
   weakCount: number;
   duplicateCount: number;
+  userEmail?: string | null;
+  onLogout?: () => void;
   onToggleLanguage: () => void;
   onToggleTheme: () => void;
   onLockVault: () => void;
@@ -43,6 +47,8 @@ export const Header: React.FC<HeaderProps> = ({
   autoLockMinutes,
   weakCount,
   duplicateCount,
+  userEmail,
+  onLogout,
   onToggleLanguage,
   onToggleTheme,
   onLockVault,
@@ -214,10 +220,31 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={onLockVault}
           title={t(language, 'lockVault')}
-          className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-300 transition"
+          className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 text-amber-300 transition"
         >
           <Lock className="w-4 h-4" />
         </button>
+
+        {/* User Account & Logout */}
+        {userEmail && (
+          <div className="flex items-center gap-1.5 pl-2 border-l border-white/10">
+            <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/50 text-slate-300 text-xs font-mono">
+              <User className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="max-w-[120px] truncate" title={userEmail}>
+                {userEmail.includes('@') ? userEmail.split('@')[0] : userEmail}
+              </span>
+            </div>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                title={language === 'bn' ? 'লগআউট করুন' : 'Sign Out'}
+                className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-300 transition"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

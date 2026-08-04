@@ -33,11 +33,22 @@ import {
   saveVaultData,
   recordActivityLog,
 } from './lib/storage';
-import { encryptData, decryptData, evaluatePasswordStrength } from './lib/crypto';
+import {
+  encryptData,
+  decryptData,
+  evaluatePasswordStrength,
+  generateSalt,
+  generateRecoveryKey,
+  hashString,
+  deriveKey,
+} from './lib/crypto';
 import { t } from './lib/i18n';
 
 // Components
 import { MasterPasswordModal } from './components/MasterPasswordModal';
+import { AuthModal } from './components/AuthModal';
+import { User } from 'firebase/auth';
+import { onAuthUserChanged, logoutUser, emailToUsername, auth } from './lib/firebase';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { CredentialCard } from './components/CredentialCard';
@@ -72,6 +83,10 @@ const PRESET_CATEGORIES: string[] = [
 ];
 
 export default function App() {
+  // Auth State
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   // Vault Meta State
   const [vaultConfig, setVaultConfig] = useState<EncryptedVaultData | null>(null);
   const [isLocked, setIsLocked] = useState(true);
@@ -133,20 +148,41 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // 1. Initial Load from Server
+  // 1. Initial Load & Firebase Auth Observer
   useEffect(() => {
-    async function initVault() {
-      const data = await fetchVaultData();
-      setVaultConfig(data);
-      if (data.settings) {
-        setSettings(data.settings);
+    const unsubscribe = onAuthUserChanged(async (user) => {
+      setAuthUser(user);
+      setAuthLoading(false);
+      if (user) {
+        const data = await fetchVaultData(user.uid);
+        setVaultConfig(data);
+        if (data.settings) {
+          setSettings(data.settings);
+        }
+        if (data.customCategories) {
+          setCustomCategories(data.customCategories);
+        }
+        setIsLocked(true);
+      } else {
+        setVaultConfig(null);
+        setAccounts([]);
+        setCryptoKey(null);
+        setIsLocked(true);
       }
-      if (data.customCategories) {
-        setCustomCategories(data.customCategories);
-      }
-    }
-    initVault();
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  const handleLogout = async () => {
+    await logoutUser();
+    setAuthUser(null);
+    setVaultConfig(null);
+    setAccounts([]);
+    setCryptoKey(null);
+    setIsLocked(true);
+    addToast('Logged out successfully', 'info');
+  };
 
   // Keyboard shortcut for Quick Search (Ctrl+K or Cmd+K)
   useEffect(() => {
@@ -242,6 +278,41 @@ export default function App() {
     await saveVaultData(newVault);
     recordActivityLog('Vault Initialized', 'First-time master password configured', 'auth');
     addToast('Master password configured! Vault created.', 'success');
+  };
+
+  // 4. Automatic Vault Unlock or Initial Setup on Authentication
+  const handleAuthSuccess = async (masterPassword: string) => {
+    if (!auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    const data = await fetchVaultData(uid);
+    setVaultConfig(data);
+
+    if (data.isConfigured && data.salt && data.masterPasswordHash) {
+      try {
+        const computedHash = await hashString(masterPassword, data.salt);
+        if (computedHash === data.masterPasswordHash) {
+          const key = await deriveKey(masterPassword, data.salt);
+          await handleUnlockSuccess(key, masterPassword);
+        } else {
+          setIsLocked(true);
+        }
+      } catch (err) {
+        console.error('Auto unlock error:', err);
+        setIsLocked(true);
+      }
+    } else {
+      // Automatic first-time vault creation for new user account
+      try {
+        const newSalt = generateSalt(16);
+        const newRecoveryKey = generateRecoveryKey();
+        const mHash = await hashString(masterPassword, newSalt);
+        const rHash = await hashString(newRecoveryKey, newSalt);
+        const key = await deriveKey(masterPassword, newSalt);
+        await handleInitialSetup(mHash, rHash, newSalt, key, newRecoveryKey, masterPassword);
+      } catch (err) {
+        console.error('Auto initial setup error:', err);
+      }
+    }
   };
 
   // Lock Vault
@@ -474,8 +545,16 @@ export default function App() {
       {/* Toast Overlay */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
 
+      {/* AUTH SCREEN (LOGIN / SIGNUP) */}
+      {!authLoading && !authUser && (
+        <AuthModal
+          language={settings.language}
+          onAuthSuccess={handleAuthSuccess}
+        />
+      )}
+
       {/* MASTER PASSWORD AUTH / SETUP SCREEN */}
-      {isLocked && vaultConfig && (
+      {authUser && isLocked && vaultConfig && (
         <MasterPasswordModal
           isConfigured={vaultConfig.isConfigured}
           masterPasswordHash={vaultConfig.masterPasswordHash}
@@ -493,7 +572,7 @@ export default function App() {
       )}
 
       {/* MAIN UNLOCKED APPLICATION INTERFACE */}
-      {!isLocked && (
+      {authUser && !isLocked && (
         <div className="flex flex-col min-h-screen">
           {/* Header Bar */}
           <Header
@@ -504,6 +583,8 @@ export default function App() {
             autoLockMinutes={settings.autoLockMinutes}
             weakCount={securityIssueCount}
             duplicateCount={0}
+            userEmail={authUser.email}
+            onLogout={handleLogout}
             onToggleLanguage={() => {
               const lang = settings.language === 'bn' ? 'en' : 'bn';
               const newSettings = { ...settings, language: lang as 'bn' | 'en' };

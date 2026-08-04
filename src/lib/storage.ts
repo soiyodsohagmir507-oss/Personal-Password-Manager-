@@ -1,6 +1,44 @@
 import { EncryptedVaultData, ActivityLog } from '../types';
+import {
+  fetchUserVaultData,
+  saveUserVaultData,
+  fetchUserActivityLogs,
+  addUserActivityLog,
+  clearUserActivityLogs,
+  auth
+} from './firebase';
 
-export async function fetchVaultData(): Promise<EncryptedVaultData> {
+export async function fetchVaultData(userId?: string): Promise<EncryptedVaultData> {
+  const uid = userId || auth.currentUser?.uid;
+
+  if (uid) {
+    // Attempt Firestore load for authenticated user
+    const firestoreVault = await fetchUserVaultData(uid);
+    if (firestoreVault && firestoreVault.isConfigured) {
+      try {
+        localStorage.setItem(`vault_data_backup_${uid}`, JSON.stringify(firestoreVault));
+      } catch (e) {
+        console.error('Error caching vault locally:', e);
+      }
+      return firestoreVault;
+    }
+
+    // Check local storage backup for this specific user
+    try {
+      const local = localStorage.getItem(`vault_data_backup_${uid}`);
+      if (local) {
+        const parsed: EncryptedVaultData = JSON.parse(local);
+        if (parsed && parsed.isConfigured) {
+          saveUserVaultData(uid, parsed).catch(() => {});
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Error reading user local backup:', e);
+    }
+  }
+
+  // Fallback to server API if no user or first time
   let serverData: EncryptedVaultData | null = null;
   try {
     const res = await fetch('/api/vault');
@@ -11,32 +49,6 @@ export async function fetchVaultData(): Promise<EncryptedVaultData> {
     console.error('Error loading vault data from server:', err);
   }
 
-  // If server has configured vault data, cache in localStorage and return
-  if (serverData && serverData.isConfigured) {
-    try {
-      localStorage.setItem('vault_data_backup', JSON.stringify(serverData));
-    } catch (e) {
-      console.error('Error writing local vault backup:', e);
-    }
-    return serverData;
-  }
-
-  // Fallback to local storage if server is unconfigured or unavailable
-  try {
-    const local = localStorage.getItem('vault_data_backup');
-    if (local) {
-      const parsed: EncryptedVaultData = JSON.parse(local);
-      if (parsed && parsed.isConfigured) {
-        // Automatically re-sync server in background
-        saveVaultData(parsed).catch(() => {});
-        return parsed;
-      }
-    }
-  } catch (e) {
-    console.error('Error reading local vault backup:', e);
-  }
-
-  // Default empty vault config
   return serverData || {
     isConfigured: false,
     masterPasswordHash: null,
@@ -56,15 +68,25 @@ export async function fetchVaultData(): Promise<EncryptedVaultData> {
   };
 }
 
-export async function saveVaultData(vault: EncryptedVaultData): Promise<boolean> {
-  // Save to localStorage immediately
+export async function saveVaultData(vault: EncryptedVaultData, userId?: string): Promise<boolean> {
+  const uid = userId || auth.currentUser?.uid;
+
+  if (uid) {
+    try {
+      localStorage.setItem(`vault_data_backup_${uid}`, JSON.stringify(vault));
+    } catch (e) {
+      console.error('Error writing local user backup:', e);
+    }
+    return await saveUserVaultData(uid, vault);
+  }
+
+  // Fallback to server API
   try {
     localStorage.setItem('vault_data_backup', JSON.stringify(vault));
   } catch (e) {
     console.error('Error writing local vault backup:', e);
   }
 
-  // Sync to server endpoint
   try {
     const res = await fetch('/api/vault', {
       method: 'POST',
@@ -78,7 +100,11 @@ export async function saveVaultData(vault: EncryptedVaultData): Promise<boolean>
   }
 }
 
-export async function fetchActivityLogs(): Promise<ActivityLog[]> {
+export async function fetchActivityLogs(userId?: string): Promise<ActivityLog[]> {
+  const uid = userId || auth.currentUser?.uid;
+  if (uid) {
+    return await fetchUserActivityLogs(uid);
+  }
   try {
     const res = await fetch('/api/logs');
     if (!res.ok) return [];
@@ -91,8 +117,14 @@ export async function fetchActivityLogs(): Promise<ActivityLog[]> {
 export async function recordActivityLog(
   action: string,
   details = '',
-  category: 'auth' | 'account' | 'security' | 'backup' | 'system' = 'system'
+  category: 'auth' | 'account' | 'security' | 'backup' | 'system' = 'system',
+  userId?: string
 ) {
+  const uid = userId || auth.currentUser?.uid;
+  if (uid) {
+    await addUserActivityLog(uid, action, details, category);
+    return;
+  }
   try {
     await fetch('/api/logs', {
       method: 'POST',
@@ -104,7 +136,11 @@ export async function recordActivityLog(
   }
 }
 
-export async function clearActivityLogs(): Promise<boolean> {
+export async function clearActivityLogs(userId?: string): Promise<boolean> {
+  const uid = userId || auth.currentUser?.uid;
+  if (uid) {
+    return await clearUserActivityLogs(uid);
+  }
   try {
     const res = await fetch('/api/logs', { method: 'DELETE' });
     return res.ok;
