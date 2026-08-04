@@ -101,27 +101,53 @@ export function onAuthUserChanged(callback: (user: VaultUser | null) => void) {
 
 export async function signUpUser(email: string, pass: string, rawUserId?: string): Promise<VaultUser> {
   const userId = rawUserId || emailToUsername(email);
+  const cleanId = userId.toLowerCase().trim();
+
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
     return userCredential.user;
   } catch (err: any) {
-    console.warn('Firebase signUp error, checking operation-not-allowed fallback:', err?.code);
+    console.warn('Firebase signUp error, checking Firestore/local account fallback:', err?.code);
     if (
       err.code === 'auth/operation-not-allowed' ||
       err.code === 'auth/admin-restricted-operation' ||
+      err.code === 'auth/invalid-credential' ||
       err.message?.includes('operation-not-allowed')
     ) {
+      // Check local storage
       const accountsRaw = localStorage.getItem('local_vault_accounts') || '{}';
       const accounts = JSON.parse(accountsRaw);
-      const cleanId = userId.toLowerCase().trim();
+
       if (accounts[cleanId]) {
         const error = new Error('This User ID is already registered.') as any;
         error.code = 'auth/email-already-in-use';
         throw error;
       }
+
+      // Check Firestore
+      try {
+        const accountDocRef = doc(db, 'userAccounts', cleanId);
+        const docSnap = await getDoc(accountDocRef);
+        if (docSnap.exists()) {
+          const error = new Error('This User ID is already registered.') as any;
+          error.code = 'auth/email-already-in-use';
+          throw error;
+        }
+      } catch (fsErr: any) {
+        if (fsErr?.code === 'auth/email-already-in-use') throw fsErr;
+      }
+
       const passHash = await hashString(pass, cleanId);
-      accounts[cleanId] = { userId: cleanId, passHash, createdAt: new Date().toISOString() };
+      const accountData = { userId: cleanId, passHash, createdAt: new Date().toISOString() };
+
+      accounts[cleanId] = accountData;
       localStorage.setItem('local_vault_accounts', JSON.stringify(accounts));
+
+      try {
+        await setDoc(doc(db, 'userAccounts', cleanId), accountData);
+      } catch (e) {
+        console.warn('Could not save userAccount to Firestore:', e);
+      }
 
       const localUser: VaultUser = {
         uid: `local_${cleanId}`,
@@ -138,11 +164,13 @@ export async function signUpUser(email: string, pass: string, rawUserId?: string
 
 export async function loginUser(email: string, pass: string, rawUserId?: string): Promise<VaultUser> {
   const userId = rawUserId || emailToUsername(email);
+  const cleanId = userId.toLowerCase().trim();
+
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, pass);
     return userCredential.user;
   } catch (err: any) {
-    console.warn('Firebase login error, checking operation-not-allowed fallback:', err?.code);
+    console.warn('Firebase login error, checking Firestore/local account fallback:', err?.code);
     if (
       err.code === 'auth/operation-not-allowed' ||
       err.code === 'auth/user-not-found' ||
@@ -151,10 +179,28 @@ export async function loginUser(email: string, pass: string, rawUserId?: string)
     ) {
       const accountsRaw = localStorage.getItem('local_vault_accounts') || '{}';
       const accounts = JSON.parse(accountsRaw);
-      const cleanId = userId.toLowerCase().trim();
-      if (accounts[cleanId]) {
+
+      let targetPassHash: string | null = null;
+      if (accounts[cleanId] && accounts[cleanId].passHash) {
+        targetPassHash = accounts[cleanId].passHash;
+      } else {
+        // Fetch from Firestore if not in local storage
+        try {
+          const docSnap = await getDoc(doc(db, 'userAccounts', cleanId));
+          if (docSnap.exists() && docSnap.data().passHash) {
+            targetPassHash = docSnap.data().passHash;
+            // Cache locally
+            accounts[cleanId] = docSnap.data();
+            localStorage.setItem('local_vault_accounts', JSON.stringify(accounts));
+          }
+        } catch (e) {
+          console.warn('Could not fetch userAccount from Firestore:', e);
+        }
+      }
+
+      if (targetPassHash) {
         const computedHash = await hashString(pass, cleanId);
-        if (computedHash === accounts[cleanId].passHash) {
+        if (computedHash === targetPassHash) {
           const localUser: VaultUser = {
             uid: `local_${cleanId}`,
             email: `${cleanId}@vault.local`,
@@ -190,48 +236,61 @@ export async function resetAccountPassword(rawUserId: string, newPass: string): 
   const accounts = JSON.parse(accountsRaw);
 
   const passHash = await hashString(newPass, cleanId);
-  accounts[cleanId] = {
+  const updatedData = {
     userId: cleanId,
     passHash,
     updatedAt: new Date().toISOString(),
   };
+  accounts[cleanId] = updatedData;
   localStorage.setItem('local_vault_accounts', JSON.stringify(accounts));
+
+  try {
+    await setDoc(doc(db, 'userAccounts', cleanId), updatedData, { merge: true });
+  } catch (e) {
+    console.warn('Could not update reset pass in Firestore:', e);
+  }
   return true;
 }
 
 // --- FIRESTORE VAULT STORAGE ---
 
 export async function fetchUserVaultData(userId: string): Promise<EncryptedVaultData | null> {
-  if (!userId || userId.startsWith('local_') || !auth.currentUser || auth.currentUser.uid !== userId) {
+  if (!userId) {
     return null;
   }
   try {
-    const docRef = doc(db, 'users', userId);
+    const docRef = doc(db, 'userVaults', userId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return docSnap.data() as EncryptedVaultData;
     }
-  } catch (err: any) {
-    if (err?.code !== 'permission-denied' && !err?.message?.includes('permissions')) {
-      console.error('Error fetching Firestore user vault:', err);
+    // Check fallback location /users/{userId}
+    const legacyDocRef = doc(db, 'users', userId);
+    const legacyDocSnap = await getDoc(legacyDocRef);
+    if (legacyDocSnap.exists()) {
+      return legacyDocSnap.data() as EncryptedVaultData;
     }
+  } catch (err: any) {
+    console.error('Error fetching Firestore user vault:', err);
   }
   return null;
 }
 
 export async function saveUserVaultData(userId: string, vault: EncryptedVaultData): Promise<boolean> {
-  if (!userId || userId.startsWith('local_') || !auth.currentUser || auth.currentUser.uid !== userId) {
+  if (!userId) {
     return true;
   }
   try {
-    const docRef = doc(db, 'users', userId);
     vault.updatedAt = new Date().toISOString();
+    const docRef = doc(db, 'userVaults', userId);
     await setDoc(docRef, vault, { merge: true });
+    // Also mirror to legacy doc location for backward compatibility
+    try {
+      await setDoc(doc(db, 'users', userId), vault, { merge: true });
+    } catch (e) {}
     return true;
   } catch (err: any) {
-    if (err?.code !== 'permission-denied' && !err?.message?.includes('permissions')) {
-      console.error('Error saving Firestore user vault:', err);
-    }
+    console.error('Error saving Firestore user vault:', err);
     return false;
   }
 }

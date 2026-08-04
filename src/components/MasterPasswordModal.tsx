@@ -59,6 +59,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   const [requires2FA, setRequires2FA] = useState(false);
   const [pendingCryptoKey, setPendingCryptoKey] = useState<CryptoKey | null>(null);
   const [recoveredAccounts, setRecoveredAccounts] = useState<CredentialAccount[]>([]);
+  const [verifiedRecoveryKey, setVerifiedRecoveryKey] = useState('');
 
   // Setup Step state (0 = Enter Passwords, 1 = Save Recovery Key)
   const [setupStep, setSetupStep] = useState(0);
@@ -71,7 +72,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Setup New Vault
+  // Setup / Reset Master Password
   const handleStartSetup = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -87,6 +88,30 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
 
     setLoading(true);
     try {
+      if (isResettingPassword) {
+        const activeSalt = salt || generatedSalt;
+        if (!activeSalt) throw new Error('Salt missing for password reset');
+
+        const newMasterHash = await hashString(password, activeSalt);
+        const derivedCryptoKey = await deriveKey(password, activeSalt);
+
+        onResetPassword(
+          newMasterHash,
+          recoveryKeyHash || generatedRecoveryHash,
+          activeSalt,
+          derivedCryptoKey,
+          verifiedRecoveryKey,
+          password,
+          recoveredAccounts
+        );
+
+        setIsResettingPassword(false);
+        setPassword('');
+        setConfirmPassword('');
+        return;
+      }
+
+      // First time setup
       const newSalt = generateSalt(16);
       const newRecoveryKey = generateRecoveryKey();
 
@@ -99,7 +124,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
       setGeneratedRecoveryHash(rHash);
       setGeneratedRecoveryKey(newRecoveryKey);
       setPendingCryptoKey(derivedCryptoKey);
-      setSetupStep(1); // Proceed to show Recovery Key to user
+      setSetupStep(1); // Proceed to show Recovery Key to user only on initial setup
     } catch (err) {
       console.error('Setup error:', err);
       setErrorMsg('Failed to process setup');
@@ -109,45 +134,19 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   };
 
   const handleFinishSetup = async () => {
-    if (isResettingPassword) {
-      if (generatedSalt && pendingCryptoKey) {
-        onResetPassword(
-          generatedMasterHash,
-          generatedRecoveryHash,
-          generatedSalt,
-          pendingCryptoKey,
-          generatedRecoveryKey,
-          password,
-          recoveredAccounts
-        );
-      } else if (salt && pendingCryptoKey) {
-        const mHash = await hashString(password, salt);
-        const rHash = await hashString(generatedRecoveryKey, salt);
-        onResetPassword(
-          mHash,
-          rHash,
-          salt,
-          pendingCryptoKey,
-          generatedRecoveryKey,
-          password,
-          recoveredAccounts
-        );
-      }
-    } else {
-      if (generatedSalt && pendingCryptoKey) {
-        onInitialSetup(
-          generatedMasterHash,
-          generatedRecoveryHash,
-          generatedSalt,
-          pendingCryptoKey,
-          generatedRecoveryKey,
-          password
-        );
-      } else if (salt && pendingCryptoKey) {
-        const mHash = await hashString(password, salt);
-        const rHash = await hashString(generatedRecoveryKey, salt);
-        onInitialSetup(mHash, rHash, salt, pendingCryptoKey, generatedRecoveryKey, password);
-      }
+    if (generatedSalt && pendingCryptoKey) {
+      onInitialSetup(
+        generatedMasterHash,
+        generatedRecoveryHash,
+        generatedSalt,
+        pendingCryptoKey,
+        generatedRecoveryKey,
+        password
+      );
+    } else if (salt && pendingCryptoKey) {
+      const mHash = await hashString(password, salt);
+      const rHash = await hashString(generatedRecoveryKey, salt);
+      onInitialSetup(mHash, rHash, salt, pendingCryptoKey, generatedRecoveryKey, password);
     }
   };
 
@@ -227,6 +226,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         console.warn('Could not decrypt accounts with recovery key:', decErr);
       }
 
+      setVerifiedRecoveryKey(formattedInput);
       setRecoveredAccounts(decryptedAccounts || []);
       setIsRecoveryMode(false);
       setIsResettingPassword(true);
