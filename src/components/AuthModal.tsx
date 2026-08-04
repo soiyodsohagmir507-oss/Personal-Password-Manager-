@@ -71,9 +71,9 @@ export function AuthModal({ language, onAuthSuccess }: AuthModalProps) {
 
     try {
       if (isSignUp) {
-        await signUpUser(syntheticEmail, password);
+        await signUpUser(syntheticEmail, password, cleanUserId);
       } else {
-        await loginUser(syntheticEmail, password);
+        await loginUser(syntheticEmail, password, cleanUserId);
       }
       onAuthSuccess(password);
     } catch (err: any) {
@@ -84,7 +84,9 @@ export function AuthModal({ language, onAuthSuccess }: AuthModalProps) {
       } else if (err.code === 'auth/email-already-in-use') {
         msg = language === 'bn' ? 'এই User ID টি ইতিমধ্যেই নিবন্ধিত। অন্য আইডি বেছে নিন।' : 'This User ID is already registered. Please choose another.';
       } else if (err.code === 'auth/weak-password') {
-        msg = language === 'bn' ? 'মাস্টার পাসওয়ার্ডটি অত্যন্ত দুর্বল।' : 'Master password is too weak.';
+        msg = language === 'bn' ? 'মাস্টার পাসওয়ার্ডটি অত্যন্ত দুর্বল (কমপক্ষে ৬ অক্ষর প্রয়োজন)।' : 'Master password is too weak (at least 6 chars needed).';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        msg = language === 'bn' ? 'নিরাপত্তা ব্যবস্থা সফলভাবে লোকাল সেফ মোডে রূপান্তরিত হয়েছে। আবার চেষ্টা করুন।' : 'Switched to secure local mode. Please try again.';
       }
       setErrorMsg(msg);
     } finally {

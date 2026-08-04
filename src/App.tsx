@@ -47,8 +47,7 @@ import { t } from './lib/i18n';
 // Components
 import { MasterPasswordModal } from './components/MasterPasswordModal';
 import { AuthModal } from './components/AuthModal';
-import { User } from 'firebase/auth';
-import { onAuthUserChanged, logoutUser, emailToUsername, auth } from './lib/firebase';
+import { onAuthUserChanged, logoutUser, emailToUsername, auth, VaultUser } from './lib/firebase';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { CredentialCard } from './components/CredentialCard';
@@ -61,6 +60,7 @@ import { TrashBinView } from './components/TrashBinView';
 import { ActivityLogModal } from './components/ActivityLogModal';
 import { SettingsModal } from './components/SettingsModal';
 import { QuickSearchModal } from './components/QuickSearchModal';
+import { RecoveryKeyShowModal } from './components/RecoveryKeyShowModal';
 import { ToastContainer, ToastMessage } from './components/Toast';
 
 const PRESET_CATEGORIES: string[] = [
@@ -84,7 +84,7 @@ const PRESET_CATEGORIES: string[] = [
 
 export default function App() {
   // Auth State
-  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<VaultUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
   // Vault Meta State
@@ -132,6 +132,7 @@ export default function App() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isQuickSearchOpen, setIsQuickSearchOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [activeRecoveryKey, setActiveRecoveryKey] = useState<string | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -274,6 +275,9 @@ export default function App() {
     setMasterPasswordPlain(masterPassPlain);
     setAccounts([]);
     setIsLocked(false);
+    if (recoveryKey) {
+      setActiveRecoveryKey(recoveryKey);
+    }
 
     await saveVaultData(newVault);
     recordActivityLog('Vault Initialized', 'First-time master password configured', 'auth');
@@ -282,9 +286,9 @@ export default function App() {
 
   // 4. Automatic Vault Unlock or Initial Setup on Authentication
   const handleAuthSuccess = async (masterPassword: string) => {
-    if (!auth.currentUser) return;
-    const uid = auth.currentUser.uid;
-    const data = await fetchVaultData(uid);
+    const activeUid = authUser?.uid || auth.currentUser?.uid;
+    if (!activeUid) return;
+    const data = await fetchVaultData(activeUid);
     setVaultConfig(data);
 
     if (data.isConfigured && data.salt && data.masterPasswordHash) {
@@ -544,6 +548,15 @@ export default function App() {
     <div className={`min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white ${settings.theme}`}>
       {/* Toast Overlay */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
+
+      {/* RECOVERY KEY SHOW MODAL ON NEW ACCOUNT CREATION */}
+      {activeRecoveryKey && (
+        <RecoveryKeyShowModal
+          recoveryKey={activeRecoveryKey}
+          language={settings.language}
+          onClose={() => setActiveRecoveryKey(null)}
+        />
+      )}
 
       {/* AUTH SCREEN (LOGIN / SIGNUP) */}
       {!authLoading && !authUser && (
