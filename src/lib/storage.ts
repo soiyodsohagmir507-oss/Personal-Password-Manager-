@@ -5,17 +5,41 @@ import {
   fetchUserActivityLogs,
   addUserActivityLog,
   clearUserActivityLogs,
-  auth
+  auth,
+  emailToUsername,
 } from './firebase';
 
+function normalizeUid(id?: string | null): string | null {
+  if (!id) return null;
+  let clean = id.trim();
+  if (clean.includes('@')) {
+    clean = emailToUsername(clean);
+  }
+  if (clean.startsWith('local_')) {
+    clean = clean.replace('local_', '');
+  }
+  clean = clean.toLowerCase().trim();
+  return clean || null;
+}
+
 function getEffectiveUid(userId?: string): string | null {
-  if (userId) return userId;
-  if (auth.currentUser?.uid) return auth.currentUser.uid;
+  if (userId) return normalizeUid(userId);
+
+  if (auth.currentUser) {
+    if (auth.currentUser.displayName) return normalizeUid(auth.currentUser.displayName);
+    if (auth.currentUser.email) return normalizeUid(auth.currentUser.email);
+    return normalizeUid(auth.currentUser.uid);
+  }
+
   try {
     const raw = localStorage.getItem('current_local_vault_user');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.uid) return parsed.uid;
+      if (parsed) {
+        if (parsed.displayName) return normalizeUid(parsed.displayName);
+        if (parsed.email) return normalizeUid(parsed.email);
+        if (parsed.uid) return normalizeUid(parsed.uid);
+      }
     }
   } catch (e) {}
   return null;

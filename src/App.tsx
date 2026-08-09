@@ -92,6 +92,8 @@ export default function App() {
   const [isLocked, setIsLocked] = useState(true);
   const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null);
   const [masterPasswordPlain, setMasterPasswordPlain] = useState('');
+  const [dek, setDek] = useState<string | null>(null);
+  const [dekKey, setDekKey] = useState<CryptoKey | null>(null);
 
   // Unencrypted Session Data
   const [accounts, setAccounts] = useState<CredentialAccount[]>([]);
@@ -203,10 +205,12 @@ export default function App() {
     updatedCategories = customCategories,
     updatedSettings = settings
   ) => {
-    if (!cryptoKey || !vaultConfig) return;
+    if (!vaultConfig) return;
+    const activeEncryptionKey = dekKey || cryptoKey;
+    if (!activeEncryptionKey) return;
 
     try {
-      const encryptedBlob = await encryptData(updatedAccounts, cryptoKey);
+      const encryptedBlob = await encryptData(updatedAccounts, activeEncryptionKey);
       const newVault: EncryptedVaultData = {
         ...vaultConfig,
         isConfigured: true,
@@ -231,11 +235,38 @@ export default function App() {
 
     if (vaultConfig && vaultConfig.encryptedAccountsBlob) {
       try {
-        const decrypted: CredentialAccount[] = await decryptData(
-          vaultConfig.encryptedAccountsBlob,
-          key
-        );
-        setAccounts(decrypted || []);
+        let activeDek = dek;
+        let activeDekKey = dekKey;
+        let decryptedAccounts: CredentialAccount[] = [];
+
+        if (vaultConfig.encryptedDEKByMaster) {
+          activeDek = await decryptData(vaultConfig.encryptedDEKByMaster, key);
+          if (activeDek && vaultConfig.salt) {
+            activeDekKey = await deriveKey(activeDek, vaultConfig.salt);
+            decryptedAccounts = await decryptData(vaultConfig.encryptedAccountsBlob, activeDekKey);
+          }
+        } else {
+          // Legacy vault without DEK
+          decryptedAccounts = await decryptData(vaultConfig.encryptedAccountsBlob, key);
+          if (vaultConfig.salt) {
+            activeDek = generateSalt(32);
+            activeDekKey = await deriveKey(activeDek, vaultConfig.salt);
+            const newAccountsBlob = await encryptData(decryptedAccounts || [], activeDekKey);
+            const newEncryptedDEKByMaster = await encryptData(activeDek, key);
+
+            const upgradedVault: EncryptedVaultData = {
+              ...vaultConfig,
+              encryptedAccountsBlob: newAccountsBlob,
+              encryptedDEKByMaster: newEncryptedDEKByMaster,
+            };
+            setVaultConfig(upgradedVault);
+            saveVaultData(upgradedVault);
+          }
+        }
+
+        setDek(activeDek);
+        setDekKey(activeDekKey);
+        setAccounts(decryptedAccounts || []);
       } catch (err) {
         console.error('Decryption failed:', err);
         addToast('Decryption error: Check master password', 'error');
@@ -259,23 +290,31 @@ export default function App() {
     recoveryKey: string,
     masterPassPlain: string
   ) => {
+    const newDek = generateSalt(32);
     const recCryptoKey = await deriveKey(recoveryKey, salt);
-    const encryptedMasterBlob = await encryptData([], key);
-    const encryptedRecBlob = await encryptData([], recCryptoKey);
+    const newDekKey = await deriveKey(newDek, salt);
+
+    const encryptedDEKByMaster = await encryptData(newDek, key);
+    const encryptedDEKByRecovery = await encryptData(newDek, recCryptoKey);
+    const encryptedAccountsBlob = await encryptData([], newDekKey);
 
     const newVault: EncryptedVaultData = {
       isConfigured: true,
       masterPasswordHash: masterHash,
       recoveryKeyHash: recoveryHash,
       salt: salt,
-      encryptedAccountsBlob: encryptedMasterBlob,
-      encryptedAccountsBlobForRecovery: encryptedRecBlob,
+      encryptedAccountsBlob,
+      encryptedAccountsBlobForRecovery: encryptedAccountsBlob,
+      encryptedDEKByMaster,
+      encryptedDEKByRecovery,
       customCategories: [],
       settings,
       updatedAt: new Date().toISOString(),
     };
 
     setVaultConfig(newVault);
+    setDek(newDek);
+    setDekKey(newDekKey);
     setIsLocked(true); // Keep vault locked so user enters Master Password on Vault Login page
     await saveVaultData(newVault);
     recordActivityLog('Vault Initialized', 'First-time master password configured', 'auth');
@@ -295,26 +334,38 @@ export default function App() {
     key: CryptoKey,
     recoveryKey: string,
     masterPassPlain: string,
-    recoveredAccountsList: CredentialAccount[]
+    recoveredAccountsList: CredentialAccount[],
+    recoveredDEKStr?: string | null
   ) => {
     const accountsToKeep = recoveredAccountsList.length > 0 ? recoveredAccountsList : accounts;
+    const activeDek = recoveredDEKStr || dek || generateSalt(32);
+    const activeDekKey = await deriveKey(activeDek, salt);
 
-    const newMasterBlob = await encryptData(accountsToKeep, key);
-    const recCryptoKey = await deriveKey(recoveryKey, salt);
-    const newRecBlob = await encryptData(accountsToKeep, recCryptoKey);
+    const newEncryptedDEKByMaster = await encryptData(activeDek, key);
+    const newAccountsBlob = await encryptData(accountsToKeep, activeDekKey);
+
+    let newEncryptedDEKByRecovery = vaultConfig?.encryptedDEKByRecovery || null;
+    if (recoveryKey) {
+      const recCryptoKey = await deriveKey(recoveryKey, salt);
+      newEncryptedDEKByRecovery = await encryptData(activeDek, recCryptoKey);
+    }
 
     const updatedVault: EncryptedVaultData = {
       ...vaultConfig,
       isConfigured: true,
       masterPasswordHash: masterHash,
-      recoveryKeyHash: recoveryHash,
+      recoveryKeyHash: recoveryHash || vaultConfig?.recoveryKeyHash || null,
       salt: salt,
-      encryptedAccountsBlob: newMasterBlob,
-      encryptedAccountsBlobForRecovery: newRecBlob,
+      encryptedAccountsBlob: newAccountsBlob,
+      encryptedAccountsBlobForRecovery: newAccountsBlob,
+      encryptedDEKByMaster: newEncryptedDEKByMaster,
+      encryptedDEKByRecovery: newEncryptedDEKByRecovery,
       updatedAt: new Date().toISOString(),
     };
 
     setVaultConfig(updatedVault);
+    setDek(activeDek);
+    setDekKey(activeDekKey);
     setAccounts(accountsToKeep);
     setIsLocked(true); // Keep vault locked so user enters Master Password on Vault Login page
     await saveVaultData(updatedVault);

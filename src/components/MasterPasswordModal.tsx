@@ -12,6 +12,8 @@ interface MasterPasswordModalProps {
   salt: string | null;
   encryptedAccountsBlob?: string | null;
   encryptedAccountsBlobForRecovery?: string | null;
+  encryptedDEKByMaster?: string | null;
+  encryptedDEKByRecovery?: string | null;
   twoFactorEnabled: boolean;
   twoFactorCode?: string | null;
   language: 'bn' | 'en';
@@ -31,7 +33,8 @@ interface MasterPasswordModalProps {
     cryptoKey: CryptoKey,
     recoveryKey: string,
     masterPassword: string,
-    recoveredAccounts: CredentialAccount[]
+    recoveredAccounts: CredentialAccount[],
+    recoveredDEK?: string | null
   ) => void;
 }
 
@@ -42,6 +45,8 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   salt,
   encryptedAccountsBlob,
   encryptedAccountsBlobForRecovery,
+  encryptedDEKByMaster,
+  encryptedDEKByRecovery,
   twoFactorEnabled,
   twoFactorCode,
   language,
@@ -59,6 +64,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
   const [requires2FA, setRequires2FA] = useState(false);
   const [pendingCryptoKey, setPendingCryptoKey] = useState<CryptoKey | null>(null);
   const [recoveredAccounts, setRecoveredAccounts] = useState<CredentialAccount[]>([]);
+  const [recoveredDEK, setRecoveredDEK] = useState<string | null>(null);
   const [verifiedRecoveryKey, setVerifiedRecoveryKey] = useState('');
 
   // Setup Step state (0 = Enter Passwords, 1 = Save Recovery Key)
@@ -102,7 +108,8 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
           derivedCryptoKey,
           verifiedRecoveryKey,
           password,
-          recoveredAccounts
+          recoveredAccounts,
+          recoveredDEK
         );
 
         setIsResettingPassword(false);
@@ -214,19 +221,43 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         return;
       }
 
-      // Try decrypting existing accounts payload using the verified Recovery Key
+      const recCryptoKey = await deriveKey(formattedInput, salt);
+      let decryptedDEKStr: string | null = null;
       let decryptedAccounts: CredentialAccount[] = [];
-      try {
-        const recCryptoKey = await deriveKey(formattedInput, salt);
-        const targetBlob = encryptedAccountsBlobForRecovery || encryptedAccountsBlob;
-        if (targetBlob) {
-          decryptedAccounts = await decryptData(targetBlob, recCryptoKey);
+
+      // 1. Try DEK decryption if present
+      if (encryptedDEKByRecovery) {
+        try {
+          decryptedDEKStr = await decryptData(encryptedDEKByRecovery, recCryptoKey);
+          if (decryptedDEKStr && encryptedAccountsBlob) {
+            const dekKey = await deriveKey(decryptedDEKStr, salt);
+            const accs = await decryptData(encryptedAccountsBlob, dekKey);
+            if (accs && Array.isArray(accs)) {
+              decryptedAccounts = accs;
+            }
+          }
+        } catch (dekErr) {
+          console.warn('DEK decryption failed during recovery:', dekErr);
         }
-      } catch (decErr) {
-        console.warn('Could not decrypt accounts with recovery key:', decErr);
+      }
+
+      // 2. Fallback to legacy direct recovery decryption if DEK wasn't used/available
+      if (decryptedAccounts.length === 0) {
+        try {
+          const targetBlob = encryptedAccountsBlobForRecovery || encryptedAccountsBlob;
+          if (targetBlob) {
+            const accs = await decryptData(targetBlob, recCryptoKey);
+            if (accs && Array.isArray(accs)) {
+              decryptedAccounts = accs;
+            }
+          }
+        } catch (decErr) {
+          console.warn('Legacy accounts decryption failed during recovery:', decErr);
+        }
       }
 
       setVerifiedRecoveryKey(formattedInput);
+      setRecoveredDEK(decryptedDEKStr);
       setRecoveredAccounts(decryptedAccounts || []);
       setIsRecoveryMode(false);
       setIsResettingPassword(true);
@@ -360,7 +391,7 @@ export const MasterPasswordModal: React.FC<MasterPasswordModalProps> = ({
         )}
 
         {/* 2. RECOVERY KEY GENERATED DISPLAY STEP */}
-        {(!isConfigured || isResettingPassword) && setupStep === 1 && (
+        {!isConfigured && !isResettingPassword && setupStep === 1 && (
           <div className="space-y-4">
             <div className="text-center">
               <Key className="w-10 h-10 text-amber-400 mx-auto mb-2" />

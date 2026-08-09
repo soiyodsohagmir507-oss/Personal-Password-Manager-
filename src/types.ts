@@ -62,6 +62,8 @@ export interface EncryptedVaultData {
   salt: string | null;
   encryptedAccountsBlob: string | null; // AES-256-GCM encrypted payload of CredentialAccount[]
   encryptedAccountsBlobForRecovery?: string | null; // AES-256-GCM encrypted payload with recovery key
+  encryptedDEKByMaster?: string | null; // DEK encrypted with Master Password Key
+  encryptedDEKByRecovery?: string | null; // DEK encrypted with Recovery Key
   customCategories: string[];
   settings: UserSettings;
   updatedAt: string;
