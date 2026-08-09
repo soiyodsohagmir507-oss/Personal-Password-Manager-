@@ -26,9 +26,9 @@ function getEffectiveUid(userId?: string): string | null {
   if (userId) return normalizeUid(userId);
 
   if (auth.currentUser) {
-    if (auth.currentUser.displayName) return normalizeUid(auth.currentUser.displayName);
     if (auth.currentUser.email) return normalizeUid(auth.currentUser.email);
-    return normalizeUid(auth.currentUser.uid);
+    if (auth.currentUser.uid) return normalizeUid(auth.currentUser.uid);
+    if (auth.currentUser.displayName) return normalizeUid(auth.currentUser.displayName);
   }
 
   try {
@@ -36,9 +36,9 @@ function getEffectiveUid(userId?: string): string | null {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed) {
-        if (parsed.displayName) return normalizeUid(parsed.displayName);
         if (parsed.email) return normalizeUid(parsed.email);
         if (parsed.uid) return normalizeUid(parsed.uid);
+        if (parsed.displayName) return normalizeUid(parsed.displayName);
       }
     }
   } catch (e) {}

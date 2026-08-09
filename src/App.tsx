@@ -221,7 +221,7 @@ export default function App() {
       };
 
       setVaultConfig(newVault);
-      await saveVaultData(newVault);
+      await saveVaultData(newVault, authUser?.uid);
     } catch (err) {
       console.error('Failed to sync vault to server:', err);
       addToast('Sync failed', 'error');
@@ -260,7 +260,7 @@ export default function App() {
               encryptedDEKByMaster: newEncryptedDEKByMaster,
             };
             setVaultConfig(upgradedVault);
-            saveVaultData(upgradedVault);
+            saveVaultData(upgradedVault, authUser?.uid);
           }
         }
 
@@ -316,7 +316,7 @@ export default function App() {
     setDek(newDek);
     setDekKey(newDekKey);
     setIsLocked(true); // Keep vault locked so user enters Master Password on Vault Login page
-    await saveVaultData(newVault);
+    await saveVaultData(newVault, authUser?.uid);
     recordActivityLog('Vault Initialized', 'First-time master password configured', 'auth');
     addToast(
       settings.language === 'bn'
@@ -368,7 +368,7 @@ export default function App() {
     setDekKey(activeDekKey);
     setAccounts(accountsToKeep);
     setIsLocked(true); // Keep vault locked so user enters Master Password on Vault Login page
-    await saveVaultData(updatedVault);
+    await saveVaultData(updatedVault, authUser?.uid);
     recordActivityLog('Vault Password Reset', 'Master password reset via recovery key', 'security');
     addToast(
       settings.language === 'bn'
@@ -1065,7 +1065,7 @@ export default function App() {
               setDek(activeDek);
               setDekKey(activeDekKey);
               setVaultConfig(updatedVault);
-              await saveVaultData(updatedVault);
+              await saveVaultData(updatedVault, authUser?.uid);
               recordActivityLog('Master Password Changed', 'Master password updated from Settings', 'security');
             } catch (err) {
               console.error('Failed to re-encrypt vault with new Master Password:', err);
