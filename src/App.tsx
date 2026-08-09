@@ -296,7 +296,8 @@ export default function App() {
 
     const encryptedDEKByMaster = await encryptData(newDek, key);
     const encryptedDEKByRecovery = await encryptData(newDek, recCryptoKey);
-    const encryptedAccountsBlob = await encryptData([], newDekKey);
+    const accountsToKeep = accounts && accounts.length > 0 ? accounts : [];
+    const encryptedAccountsBlob = await encryptData(accountsToKeep, newDekKey);
 
     const newVault: EncryptedVaultData = {
       isConfigured: true,
@@ -307,8 +308,8 @@ export default function App() {
       encryptedAccountsBlobForRecovery: encryptedAccountsBlob,
       encryptedDEKByMaster,
       encryptedDEKByRecovery,
-      customCategories: [],
-      settings,
+      customCategories: vaultConfig?.customCategories || [],
+      settings: vaultConfig?.settings || settings,
       updatedAt: new Date().toISOString(),
     };
 
@@ -657,6 +658,8 @@ export default function App() {
           salt={vaultConfig.salt}
           encryptedAccountsBlob={vaultConfig.encryptedAccountsBlob}
           encryptedAccountsBlobForRecovery={vaultConfig.encryptedAccountsBlobForRecovery || null}
+          encryptedDEKByMaster={vaultConfig.encryptedDEKByMaster || null}
+          encryptedDEKByRecovery={vaultConfig.encryptedDEKByRecovery || null}
           twoFactorEnabled={settings.twoFactorEnabled}
           twoFactorCode={settings.twoFactorCode}
           language={settings.language}

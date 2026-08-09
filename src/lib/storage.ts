@@ -57,18 +57,35 @@ export async function fetchVaultData(userId?: string): Promise<EncryptedVaultDat
       return firestoreVault;
     }
 
-    // Check local storage backup for this specific user
-    try {
-      const local = localStorage.getItem(`vault_data_backup_${uid}`);
-      if (local) {
-        const parsed: EncryptedVaultData = JSON.parse(local);
-        if (parsed && parsed.isConfigured) {
-          saveUserVaultData(uid, parsed).catch(() => {});
-          return parsed;
-        }
+    // Check local storage backup for this user and alias keys
+    const backupKeys = [`vault_data_backup_${uid}`];
+    if (auth.currentUser?.email) {
+      const emailClean = auth.currentUser.email.toLowerCase().trim();
+      const uname = emailToUsername(emailClean);
+      if (emailClean && !backupKeys.includes(`vault_data_backup_${emailClean}`)) {
+        backupKeys.push(`vault_data_backup_${emailClean}`);
       }
-    } catch (e) {
-      console.error('Error reading user local backup:', e);
+      if (uname && !backupKeys.includes(`vault_data_backup_${uname}`)) {
+        backupKeys.push(`vault_data_backup_${uname}`);
+      }
+    }
+    if (!backupKeys.includes('vault_data_backup')) {
+      backupKeys.push('vault_data_backup');
+    }
+
+    for (const key of backupKeys) {
+      try {
+        const local = localStorage.getItem(key);
+        if (local) {
+          const parsed: EncryptedVaultData = JSON.parse(local);
+          if (parsed && parsed.isConfigured) {
+            saveUserVaultData(uid, parsed).catch(() => {});
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.error('Error reading user local backup key:', key, e);
+      }
     }
   }
 
