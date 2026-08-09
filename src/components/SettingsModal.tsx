@@ -81,11 +81,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
 
     try {
-      const newSalt = generateSalt(16);
-      const newHash = await hashString(newPass, newSalt);
-      const newKey = await deriveKey(newPass, newSalt);
+      const activeSalt = salt || generateSalt(16);
+      const newHash = await hashString(newPass, activeSalt);
+      const newKey = await deriveKey(newPass, activeSalt);
 
-      onUpdateMasterPassword(newHash, newSalt, newKey, newPass);
+      await onUpdateMasterPassword(newHash, activeSalt, newKey, newPass);
       setCurrentPass('');
       setNewPass('');
       setConfirmNewPass('');

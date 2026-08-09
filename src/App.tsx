@@ -1029,17 +1029,48 @@ export default function App() {
           syncVaultToServer(accounts, customCategories, updated);
           addToast('Settings updated', 'success');
         }}
-        onUpdateMasterPassword={(newHash, newSalt, newKey, newPlain) => {
+        onUpdateMasterPassword={async (newHash, newSalt, newKey, newPlain) => {
           setCryptoKey(newKey);
           setMasterPasswordPlain(newPlain);
+
           if (vaultConfig) {
-            const updatedVault = {
-              ...vaultConfig,
-              masterPasswordHash: newHash,
-              salt: newSalt,
-            };
-            setVaultConfig(updatedVault);
-            saveVaultData(updatedVault);
+            try {
+              let activeDek = dek;
+              if (!activeDek && vaultConfig.encryptedDEKByMaster && cryptoKey) {
+                try {
+                  activeDek = await decryptData(vaultConfig.encryptedDEKByMaster, cryptoKey);
+                } catch (e) {
+                  console.error('Failed to decrypt existing DEK:', e);
+                }
+              }
+
+              if (!activeDek) {
+                activeDek = generateSalt(32);
+              }
+
+              const activeDekKey = await deriveKey(activeDek, newSalt);
+              const newAccountsBlob = await encryptData(accounts, activeDekKey);
+              const newEncryptedDEKByMaster = await encryptData(activeDek, newKey);
+
+              const updatedVault: EncryptedVaultData = {
+                ...vaultConfig,
+                masterPasswordHash: newHash,
+                salt: newSalt,
+                encryptedAccountsBlob: newAccountsBlob,
+                encryptedAccountsBlobForRecovery: newAccountsBlob,
+                encryptedDEKByMaster: newEncryptedDEKByMaster,
+                updatedAt: new Date().toISOString(),
+              };
+
+              setDek(activeDek);
+              setDekKey(activeDekKey);
+              setVaultConfig(updatedVault);
+              await saveVaultData(updatedVault);
+              recordActivityLog('Master Password Changed', 'Master password updated from Settings', 'security');
+            } catch (err) {
+              console.error('Failed to re-encrypt vault with new Master Password:', err);
+              addToast('Failed to update vault encryption', 'error');
+            }
           }
         }}
         onAddCustomCategory={(cName) => {
