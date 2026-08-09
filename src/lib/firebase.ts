@@ -258,17 +258,48 @@ export async function fetchUserVaultData(userId: string): Promise<EncryptedVault
   if (!userId) {
     return null;
   }
+  const cleanId = userId.toLowerCase().trim();
   try {
-    const docRef = doc(db, 'userVaults', userId);
+    // 1. Primary location check in userVaults/{cleanId}
+    const docRef = doc(db, 'userVaults', cleanId);
     const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    if (docSnap.exists() && docSnap.data().isConfigured) {
       return docSnap.data() as EncryptedVaultData;
     }
-    // Check fallback location /users/{userId}
-    const legacyDocRef = doc(db, 'users', userId);
+
+    // 2. Check users/{cleanId}
+    const legacyDocRef = doc(db, 'users', cleanId);
     const legacyDocSnap = await getDoc(legacyDocRef);
-    if (legacyDocSnap.exists()) {
+    if (legacyDocSnap.exists() && legacyDocSnap.data().isConfigured) {
       return legacyDocSnap.data() as EncryptedVaultData;
+    }
+
+    // 3. Alternate alias fallback checks (email & email username)
+    const emailStr = auth.currentUser?.email;
+    if (emailStr) {
+      const emailClean = emailStr.toLowerCase().trim();
+      const uname = emailToUsername(emailClean);
+      const candidates = [emailClean, uname];
+
+      for (const cand of candidates) {
+        if (cand && cand !== cleanId) {
+          const cRef1 = doc(db, 'userVaults', cand);
+          const cSnap1 = await getDoc(cRef1);
+          if (cSnap1.exists() && cSnap1.data().isConfigured) {
+            const vaultData = cSnap1.data() as EncryptedVaultData;
+            setDoc(docRef, vaultData, { merge: true }).catch(() => {});
+            return vaultData;
+          }
+
+          const cRef2 = doc(db, 'users', cand);
+          const cSnap2 = await getDoc(cRef2);
+          if (cSnap2.exists() && cSnap2.data().isConfigured) {
+            const vaultData = cSnap2.data() as EncryptedVaultData;
+            setDoc(docRef, vaultData, { merge: true }).catch(() => {});
+            return vaultData;
+          }
+        }
+      }
     }
   } catch (err: any) {
     console.error('Error fetching Firestore user vault:', err);
@@ -280,14 +311,35 @@ export async function saveUserVaultData(userId: string, vault: EncryptedVaultDat
   if (!userId) {
     return true;
   }
+  const cleanId = userId.toLowerCase().trim();
   try {
     vault.updatedAt = new Date().toISOString();
-    const docRef = doc(db, 'userVaults', userId);
+
+    // 1. Write to userVaults/{cleanId}
+    const docRef = doc(db, 'userVaults', cleanId);
     await setDoc(docRef, vault, { merge: true });
-    // Also mirror to legacy doc location for backward compatibility
+
+    // 2. Mirror to legacy location users/{cleanId}
     try {
-      await setDoc(doc(db, 'users', userId), vault, { merge: true });
+      await setDoc(doc(db, 'users', cleanId), vault, { merge: true });
     } catch (e) {}
+
+    // 3. Mirror to email aliases if available
+    const emailStr = auth.currentUser?.email;
+    if (emailStr) {
+      const emailClean = emailStr.toLowerCase().trim();
+      const uname = emailToUsername(emailClean);
+      const aliases = [emailClean, uname];
+      for (const alias of aliases) {
+        if (alias && alias !== cleanId) {
+          try {
+            await setDoc(doc(db, 'userVaults', alias), vault, { merge: true });
+            await setDoc(doc(db, 'users', alias), vault, { merge: true });
+          } catch (e) {}
+        }
+      }
+    }
+
     return true;
   } catch (err: any) {
     console.error('Error saving Firestore user vault:', err);

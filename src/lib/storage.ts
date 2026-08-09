@@ -12,9 +12,6 @@ import {
 function normalizeUid(id?: string | null): string | null {
   if (!id) return null;
   let clean = id.trim();
-  if (clean.includes('@')) {
-    clean = emailToUsername(clean);
-  }
   if (clean.startsWith('local_')) {
     clean = clean.replace('local_', '');
   }
@@ -26,8 +23,8 @@ function getEffectiveUid(userId?: string): string | null {
   if (userId) return normalizeUid(userId);
 
   if (auth.currentUser) {
-    if (auth.currentUser.email) return normalizeUid(auth.currentUser.email);
     if (auth.currentUser.uid) return normalizeUid(auth.currentUser.uid);
+    if (auth.currentUser.email) return normalizeUid(auth.currentUser.email);
     if (auth.currentUser.displayName) return normalizeUid(auth.currentUser.displayName);
   }
 
@@ -36,8 +33,8 @@ function getEffectiveUid(userId?: string): string | null {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed) {
-        if (parsed.email) return normalizeUid(parsed.email);
         if (parsed.uid) return normalizeUid(parsed.uid);
+        if (parsed.email) return normalizeUid(parsed.email);
         if (parsed.displayName) return normalizeUid(parsed.displayName);
       }
     }
@@ -111,6 +108,12 @@ export async function saveVaultData(vault: EncryptedVaultData, userId?: string):
   if (uid) {
     try {
       localStorage.setItem(`vault_data_backup_${uid}`, JSON.stringify(vault));
+      if (auth.currentUser?.email) {
+        const uname = emailToUsername(auth.currentUser.email);
+        if (uname) {
+          localStorage.setItem(`vault_data_backup_${uname}`, JSON.stringify(vault));
+        }
+      }
     } catch (e) {
       console.error('Error writing local user backup:', e);
     }

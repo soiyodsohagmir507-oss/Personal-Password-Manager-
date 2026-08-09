@@ -337,7 +337,21 @@ export default function App() {
     recoveredAccountsList: CredentialAccount[],
     recoveredDEKStr?: string | null
   ) => {
-    const accountsToKeep = recoveredAccountsList.length > 0 ? recoveredAccountsList : accounts;
+    let accountsToKeep = recoveredAccountsList.length > 0 ? recoveredAccountsList : accounts;
+
+    // Safety check: if accountsToKeep is empty but encryptedAccountsBlob exists, attempt DEK decryption fallback
+    if ((!accountsToKeep || accountsToKeep.length === 0) && vaultConfig?.encryptedAccountsBlob) {
+      if (recoveredDEKStr) {
+        try {
+          const tempDekKey = await deriveKey(recoveredDEKStr, salt);
+          const dec = await decryptData(vaultConfig.encryptedAccountsBlob, tempDekKey);
+          if (dec && Array.isArray(dec) && dec.length > 0) {
+            accountsToKeep = dec;
+          }
+        } catch (e) {}
+      }
+    }
+
     const activeDek = recoveredDEKStr || dek || generateSalt(32);
     const activeDekKey = await deriveKey(activeDek, salt);
 
@@ -1049,7 +1063,19 @@ export default function App() {
               }
 
               const activeDekKey = await deriveKey(activeDek, newSalt);
-              const newAccountsBlob = await encryptData(accounts, activeDekKey);
+
+              let currentAccounts = accounts;
+              if ((!currentAccounts || currentAccounts.length === 0) && vaultConfig.encryptedAccountsBlob) {
+                try {
+                  const dec = await decryptData(vaultConfig.encryptedAccountsBlob, activeDekKey);
+                  if (dec && Array.isArray(dec) && dec.length > 0) {
+                    currentAccounts = dec;
+                    setAccounts(dec);
+                  }
+                } catch (e) {}
+              }
+
+              const newAccountsBlob = await encryptData(currentAccounts, activeDekKey);
               const newEncryptedDEKByMaster = await encryptData(activeDek, newKey);
 
               const updatedVault: EncryptedVaultData = {
