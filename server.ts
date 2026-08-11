@@ -12,14 +12,20 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// File-backed data storage path
-const DATA_DIR = path.join(process.cwd(), 'data');
+// File-backed data storage path with fallback for serverless/read-only environments
+const DATA_DIR = (process.env.VERCEL || process.env.TMPDIR || process.env.TEMP)
+  ? path.join('/tmp', 'data')
+  : path.join(process.cwd(), 'data');
 const VAULT_FILE = path.join(DATA_DIR, 'encrypted_vault.json');
 const LOGS_FILE = path.join(DATA_DIR, 'activity_logs.json');
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure data directory exists safely
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn('Could not create data directory, using in-memory/temp fallback:', err);
 }
 
 // Initial vault structure helper
